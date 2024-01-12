@@ -21,7 +21,6 @@ class TrendformerDriver:
             self.model = transformer_model()
             self.model.load_weights("./trendformer/model_weights/10_EMA_3_pred.h5")
             TrendformerDriver._instance = self
-        print(self.model.summary())
 
     # Takes 20 days of data, normalized each column, runs the model and returns the prediction
     def predict(self, data):
@@ -29,16 +28,10 @@ class TrendformerDriver:
         normalized_data = self._normalize(data)
 
         columns_to_drop = [column for column in normalized_data.columns if column not in features_to_keep]
-
         normalized_data = normalized_data.drop(columns=columns_to_drop)
 
         # Convert the DataFrame to a numpy array
         normalized_data_array = normalized_data.values
-
-        # Reshape the array to match the expected input shape
-        # normalized_data_array = normalized_data_array.reshape(-1, 20, 29)
-
-        # Add an extra dimension to the array
         normalized_data_array = np.expand_dims(normalized_data_array, axis=0)
 
         prediction = self.model.predict(normalized_data_array)

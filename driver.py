@@ -23,15 +23,15 @@
 
 
 # Imports
-
 import sys
+import asyncio
+import heapq
 
 from alpaca_driver.alpaca_driver import AlpacaDriver
 from trendformer.trendformer_driver import TrendformerDriver
 from data_manager.data_manager import DataManager
 # from notification_manager.notification_manager import NotificationManager
 from logger import Logger
-
 
 
 # Generate a class for the driver
@@ -42,38 +42,53 @@ class Driver:
         self.logger = Logger('main', 'logs/main.log').get_logger()
 
         # Class variables
-        self.watchlist  = []
+        self.watchlist = []
         self.dataframes = {}
+        self.predictions = {}
+        self.scores = {}
+        self.todays_data = {}
+        self.positions = []
+
+        self.prediction_interval = 1  # minutes
+        self.prediction_threshold = 0.5
+
+        self.consensus_weight = 1
+        self.distance_below_ema_weight = 1
+
+        # Keep track of how many consesus were made for the watchlist
+        self.consensus_made = 0
 
         try:
             # Initialize the drivers
-            self.alpaca_driver          = AlpacaDriver()
-            self.trendformer_driver     = TrendformerDriver()
-            self.data_manager           = DataManager()
+            self.alpaca_driver = AlpacaDriver()
+            self.trendformer_driver = TrendformerDriver()
+            self.data_manager = DataManager()
             # self.notification_manager = NotificationManager()
 
-            self.watchlist  = self.alpaca_driver.get_watchlist()
+            self.watchlist = self.alpaca_driver.get_watchlist()
             self.dataframes = self.data_manager.get_data(self.watchlist)
+            self.predictions = {symbol: {'up': [], 'down': [],
+                                         'consensus': 0} for symbol in self.watchlist}
+            self.scores = {symbol: 0 for symbol in self.watchlist}
+
 
             self.logger.info('Initialized successfully')
         except Exception as e:
             self.logger.error(f'An error occurred during initialization: {e}')
             sys.exit(1)
 
-
     # Sidenote the data manager should be the one that records things like predictions, buy/sell orders, etc.
     # Since it will be the one that is interfacing with CSV files and it makes most sense to have that type of data stored in a CSV file
     # It will make things so much easier when we go to plot the stock data and the predictions and buy/sell orders on a graph.
 
     def run(self):
-        # Run the websocket
-        self.alpaca_driver.initiate_websocket(self.data_handler, self.watchlist)
+        # Initiate the websockets
+        self.alpaca_driver.initiate_bar_stream(
+            self.bar_data_handler, self.watchlist)
+        self.alpaca_driver.initiate_trade_updates_stream(
+            self.trade_update_handler)
 
-    async def data_handler(self, data):
-        
-        # Maybe there needs to be some sort of interval where we run the model every 30 minutes or so instead of every minute.
-        # But I dont see a big issue the way it is now since running it once every minute isnt that big of a deal. ALthough it could
-        # be interesting to see if I can store a prediction every minute and every 15 minutes use the last 15 predictions majority vote to determine the buy/sell. 
+    async def bar_data_handler(self, data):
         symbol = data.symbol
         df = self.dataframes[symbol]
 
@@ -86,64 +101,128 @@ class Driver:
         }
 
         refreshed_df = self.data_manager.refresh_dataframe(df, new_row)
+        today = refreshed_df.iloc[-1]
+        
+        self.todays_data[symbol] = today
 
+
+        positions = self.alpaca_driver.get_all_positions()
+        if symbol in positions:
+            # Generate code to sell the stock
+            # self.alpaca_driver.send_order(...)
+            # self.notification_manager.send_notification(...)
+            pass
+
+        
         prediction = self.trendformer_driver.predict(refreshed_df)
 
-        # I have the predictions now. I need to use the data manager to store the prediction in a csv file along
-        # along with a timestamp of when it was made and the stock symbol. 
+        # Ill be storing the predictions when I buy or sell too so when I plot it ill be able to tell what the prediction was at the time.
+        lock = asyncio.Lock()
 
-        # So a prediction is made every minute for each stock. 
-        # Store the prediction is a dictionary with the key being the stock symbol and the value being a list of predictions.
-        # Check to see if the length of the predictions is equal to 15. If it is check to see what the consensus is. 
-        # Example if 10/15 predictions is buy then buy if you can. This way we arent relying on a single moment in time to make a decision and 
-        # we are taking into account the last 15 minutes of movement.
+        async with lock:
+            if (len(self.predictions[symbol]['up']) + len(self.predictions[symbol]['down'])) == self.prediction_interval:
+                self.data_manager.store_prediction(symbol, prediction)
 
-        # After checking the consensus, clear the list of predictions and start over.
+                # The Consensus will be the average of the majority
+                if len(self.predictions[symbol]['up']) > len(self.predictions[symbol]['down']):
+                    consensus = sum(
+                        self.predictions[symbol]['up']) / len(self.predictions[symbol]['up'])
+                else:
+                    consensus = sum(
+                        self.predictions[symbol]['down']) / len(self.predictions[symbol]['down'])
 
-        # The buy and sell logic will be called once we hit 15 predictions.
+                # Store the consensus and clear the predictions
+                self.predictions[symbol]['consensus'] = consensus
+                self.predictions[symbol]['up'] = []
+                self.predictions[symbol]['down'] = []
+
+                if self.consensus_made == len(self.watchlist):
+                    self.consensus_made = 1
+
+                self.consensus_made += 1
+
+                below_ema_score = (
+                    (today['Close'] - today['EMA_10']) / today['EMA_10']) * 100
+                self.scores[symbol] = (self.consensus_weight * consensus) + \
+                    (self.distance_below_ema_weight * below_ema_score)
+
+            else:
+                if prediction > self.prediction_threshold:
+                    self.predictions[symbol]['up'].append(prediction)
+                else:
+                    self.predictions[symbol]['down'].append(prediction)
+
+            buying_power = float(self.alpaca_driver.get_account().buying_power)
+            
+
+            # Also I need to restrict my trading from market open to market close. My buys should be only be open for a few minutes.
+
+            # I need to add the function in data manager to add a new row every day.
 
 
 
-        # This function will be used to handle the data that is received from the websocket
-        # We will use this function to run the model and make predictions
-        # We will also use this function to check the buy/sell conditions and send the buy/sell orders
-        # We will also use this function to record the predictions, buy/sell orders, etc.
+            '''
+                Things to do:
+                1. Restrict trading to market open to market close. Dont place any orders outside of that time frame.
+                2. Add a new row to the historical data every day.
+                3. Create a seperate function to figure out how much buying power to use.
+                4. Create the sell logic.
+                       - Hard Stop loss at around 2-3 x the ATR
+                       - Trailing stop loss at around 0.2 - 0.5 x the ATR after the stock has gone up 0.8 - 1.5 x the ATR
+                       - Every 3 days after entering the position, use the current prediction to sell if its a downtrend or Hold 
+                       for another 3 days if its an uptrend.
+            '''
 
-        # Run the model to get the prediction
-        # prediction = self.trendformer_driver.run_model(data)
+            #Logic to divide the buying power based on how many positions we have
+            # I need a better way to figure out how much buying power to use
+            if len(positions) == 0:
+                buying_power = buying_power * 0.3
+            elif len(positions) == 1:
+                buying_power = buying_power * 0.5
+            elif len(positions)[symbol] == 2:
+                buying_power = buying_power * 1.0
+            elif len(positions)[symbol] == 3:
+                buying_power = 0
 
-        # Check the buy/sell conditions
-        # buy_condition = self._check_buy_condition(prediction)
-        # sell_condition = self._check_sell_condition(prediction)
+            quantity = buying_power // today['Close']
 
-        # If the buy condition is met, send the buy order
-        # if buy_condition:
-        #     self._send_buy_order()
-        #     self._record_buy_order()
 
-        # If the sell condition is met, send the sell order
-        # if sell_condition:
-        #     self._send_sell_order()
-        #     self._record_sell_order()
+            # I want to clean this up to make these conditions more readable. Long if checks are horrible
 
-        # Record the prediction
-        # self._record_prediction(prediction)
+            # If all consensus have been made and we have enough buying power we can look into buying
+            # if self.consensus_made == len(self.watchlist) and quantity > 0:
+            if quantity > 0:
+                # Get the stocks that we can afford
+                affordable_stocks = {symbol: self.scores[symbol]
+                                for symbol, today in self.todays_data.items() if today['Close'] < buying_power}
+                
+                top_3_symbols = heapq.nlargest(3, affordable_stocks, key=affordable_stocks.get)
 
-        # Record the data
-        # self._record_data(data)
+                if symbol in top_3_symbols:
+                    if self.predictions[symbol]['consensus'] > self.prediction_threshold and today['Close'] < today['EMA_10']*2:
+                        self.positions.append(symbol)
+                        self.alpaca_driver.send_order(
+                            symbol=symbol, limit_price=today['Close'], quantity=quantity, order_type='buy', time_in_force='day')
+                        self.logger.info(f'Buying {symbol} at {today["Close"]}')
+                    # This is where we send a notification. Also another one when the order is filled.
+                    # self.notification_manager.send_notification(...)
 
-        # Send a notification
-        # self._send_notification()
 
         # Log the data
         # self._log_data(data)
 
         # Print the data
-        breakpoint()
         print(data)
 
+    async def trade_update_handler(self, data):
+        # Just for logging and sending notifications
+        # log whatever the outcome of the order is and send a notification
+        # Also store in data manager too
+        print(data)
 
 # generate main function
+
+
 def main():
     # Initialize the driver
     driver = Driver()

@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 import datetime
 import yfinance as yf
 import pandas_ta as ta
+import csv
 
 
 class DataManager:
@@ -40,6 +41,24 @@ class DataManager:
             data[symbol] = df
 
         return data
+    
+    def store_prediction(self, symbol, prediction):
+        file_path = self.DATA_PATH + symbol + '_predictions.csv'
+
+        directory = os.path.dirname(file_path)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        if not os.path.isfile(file_path):
+            with open(file_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['date', 'prediction'])
+
+        # Append the new row to the file
+        new_row = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), prediction]
+        with open(file_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(new_row)
 
     # Pull data from the yfinance api
     def _download_data(self, symbol):
@@ -114,9 +133,9 @@ class DataManager:
         new_row_df = pd.DataFrame(new_row, index=[index])
         
         new_row_df['52_week_high'] = max(
-            new_row_df['Close'][-1], dataframe['52_week_high'].iloc[-1])
+            new_row_df['Close'].iloc[-1], dataframe['52_week_high'].iloc[-1])
         new_row_df['52_week_low'] = min(
-            new_row_df['Close'][-1], dataframe['52_week_low'].iloc[-1])
+            new_row_df['Close'].iloc[-1], dataframe['52_week_low'].iloc[-1])
 
         refreshed_df = pd.concat([dataframe, new_row_df])
         refreshed_df['Volume'] = refreshed_df['Volume'].ffill()
