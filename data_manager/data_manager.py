@@ -144,6 +144,28 @@ class DataManager:
         refreshed_df = self._add_technical_indicators(refreshed_df).tail(20)
 
         return refreshed_df
+    
+    def update_daily_data(self, watchlist):
+        for symbol in watchlist:
+            self._download_data(symbol)
+
+    def store_trade(self, symbol, side, quantity, price, prediction):
+        file_path = self.DATA_PATH + symbol + '_trades.csv'
+
+        directory = os.path.dirname(file_path)
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        if not os.path.isfile(file_path):
+            with open(file_path, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(['date', 'side', 'quantity', 'price', 'prediction'])
+
+        # Append the new row to the file
+        new_row = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), side, quantity, price, prediction]
+        with open(file_path, 'a', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(new_row)
 
 def main():
     # Generate a data manager object
