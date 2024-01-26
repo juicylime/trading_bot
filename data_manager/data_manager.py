@@ -98,7 +98,7 @@ class DataManager:
         data.to_csv(file_path, index=True)
 
     
-    def _add_technical_indicators(self, dataframe):
+    def add_technical_indicators(self, dataframe):
         dataframe.ta.sma(length=10, column='Volume', append=True)
         dataframe.rename(columns={'SMA_10': 'avgTradingVolume'}, inplace=True)
         dataframe.ta.sma(length=30, append=True)
@@ -141,15 +141,24 @@ class DataManager:
         refreshed_df['Volume'] = refreshed_df['Volume'].ffill()
         refreshed_df['NASDAQ_Close'] = refreshed_df['NASDAQ_Close'].ffill()
         refreshed_df.index = pd.to_datetime(refreshed_df.index)
-        refreshed_df = self._add_technical_indicators(refreshed_df).tail(20)
+        refreshed_df = self.add_technical_indicators(refreshed_df).tail(20)
 
         return refreshed_df
     
     def update_daily_data(self, watchlist):
-        for symbol in watchlist:
-            self._download_data(symbol)
+            """
+            Updates the daily data for the symbols in the given watchlist.
 
-    def store_trade(self, symbol, side, quantity, price, prediction):
+            Args:
+                watchlist (list): A list of symbols to update the daily data for.
+
+            Returns:
+                None
+            """
+            for symbol in watchlist:
+                self._download_data(symbol)
+
+    def store_trade(self, symbol, side, quantity, price, prediction, portfolio_value):
         file_path = self.DATA_PATH + symbol + '_trades.csv'
 
         directory = os.path.dirname(file_path)
@@ -159,10 +168,10 @@ class DataManager:
         if not os.path.isfile(file_path):
             with open(file_path, 'w', newline='') as f:
                 writer = csv.writer(f)
-                writer.writerow(['date', 'side', 'quantity', 'price', 'prediction'])
+                writer.writerow(['date', 'side', 'quantity', 'price', 'prediction', 'portfolio_value'])
 
         # Append the new row to the file
-        new_row = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), side, quantity, price, prediction]
+        new_row = [datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), side, quantity, price, prediction, portfolio_value]
         with open(file_path, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(new_row)

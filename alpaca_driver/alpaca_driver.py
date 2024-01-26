@@ -7,7 +7,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.data.live import StockDataStream
 from alpaca.trading.requests import LimitOrderRequest
 from alpaca.trading.requests import GetOrdersRequest
-from alpaca.trading.enums import OrderSide, QueryOrderStatus
+from alpaca.trading.enums import OrderSide, QueryOrderStatus, TimeInForce
 from alpaca.trading.stream import TradingStream
 from dotenv import load_dotenv
 import os
@@ -37,7 +37,25 @@ class AlpacaDriver:
         # The watchlist endpoint is broken so Ill harcode it for now
         # watchlists = self.trading_client.get_watchlist_by_name('Primary Watchlist')
         # Need to fetch/populate on init
-        watchlist = ['AMZN', 'GOOG', 'PYPL', 'U', 'AAPL']
+        watchlist = [
+            'AMZN',
+            'GOOG',
+            'PYPL',
+            'U',
+            'AAPL',
+            'MSFT',
+            'TSLA',
+            'AFRM',
+            'LSPD',
+            'JKS',
+            'DDOG',
+            'FSLR',
+            'NOVA',
+            'OTEX',
+            'GEN',
+            'GTLB',
+            'NRDY'
+        ]
         return watchlist
 
     # Generate the get_account function
@@ -89,6 +107,10 @@ class AlpacaDriver:
             order_data=limit_order_data
         )
         return limit_order
+    
+    def cancel_order(self, order_id):
+        self.trading_client.cancel_order_by_id(order_id)
+
 
     def cancel_all_orders(self):
         cancel_statuses = self.trading_client.cancel_orders()
